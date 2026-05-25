@@ -1,37 +1,21 @@
-import TelegramBot from 'node-telegram-bot-api';
-import {
-  Client,
-  GatewayIntentBits,
-  Guild,
-  GuildMember,
-  ChannelType,
-  VoiceChannel,
-} from 'discord.js';
-import * as nodePath from 'path';
+'use strict';
 
-import ffmpegPath from 'ffmpeg-static';
+const TelegramBot = require('node-telegram-bot-api');
+const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+const nodePath = require('path');
+const path = require('path');
+const dotenv = require('dotenv');
+dotenv.config();
+
+// ─── ffmpeg ───────────────────────────────────────────────────────────────────
+const ffmpegPath = require('ffmpeg-static');
 if (ffmpegPath) {
   process.env.PATH = `${nodePath.dirname(ffmpegPath)}:${process.env.PATH || ''}`;
 }
 
-import {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
-  VoiceConnectionStatus,
-  entersState,
-  getVoiceConnection,
-} from '@discordjs/voice';
-import * as path from 'path';
-import * as dotenv from 'dotenv';
-dotenv.config();
-
 // ─── opusscript ───────────────────────────────────────────────────────────────
 try {
-  const { createRequire } = require('module');
-  const req = createRequire(__filename);
-  req('opusscript');
+  require('opusscript');
   console.log('✅ opusscript загружен');
 } catch (e) {
   console.error('❌ opusscript не найден:', e);
@@ -39,17 +23,26 @@ try {
 
 console.log('ffmpeg path:', ffmpegPath);
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
-const TG_TOKEN      = process.env.TG_BOT_TOKEN!;
-const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN!;
-const GUILD_ID      = process.env.DISCORD_GUILD_ID!;
+const {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  entersState,
+  getVoiceConnection,
+} = require('@discordjs/voice');
 
-const ALLOWED_TG_IDS: number[] = (process.env.TG_ALLOWED_IDS || '')
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const TG_TOKEN      = process.env.TG_BOT_TOKEN;
+const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const GUILD_ID      = process.env.DISCORD_GUILD_ID;
+
+const ALLOWED_TG_IDS = (process.env.TG_ALLOWED_IDS || '')
   .split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
 
 // ─── ЗВУКИ ────────────────────────────────────────────────────────────────────
-// Положи .mp3 файлы в папку sounds/ рядом с package.json
-const SOUNDS: Record<string, { file: string; label: string }> = {
+const SOUNDS = {
   tiki:   { file: 'tiki.mp3',   label: '🎵 Тики-тики' },
   gazan1: { file: 'gazan1.mp3', label: '💥 Газан 1' },
   gazan2: { file: 'gazan2.mp3', label: '💥 Газан 2' },
@@ -84,8 +77,8 @@ const FUNNY_NAMES = [
   '🍌 Банановая республика',
 ];
 
-// ─── АКТИВНЫЕ BOUNCE-ЗАДАЧИ (move) ───────────────────────────────────────────
-const activeBounces: Map<string, NodeJS.Timeout> = new Map();
+// ─── АКТИВНЫЕ BOUNCE-ЗАДАЧИ ───────────────────────────────────────────────────
+const activeBounces = new Map();
 
 // ─── DISCORD CLIENT ───────────────────────────────────────────────────────────
 const discord = new Client({
@@ -96,10 +89,10 @@ const discord = new Client({
   ],
 });
 
-let guild: Guild | null = null;
+let guild = null;
 let lastMemberFetch = 0;
 
-async function fetchMembersIfNeeded(g: Guild) {
+async function fetchMembersIfNeeded(g) {
   const now = Date.now();
   if (now - lastMemberFetch > 5 * 60 * 1000) {
     await g.members.fetch();
@@ -107,9 +100,9 @@ async function fetchMembersIfNeeded(g: Guild) {
   }
 }
 
-(discord as any).on('clientReady', async () => {
+discord.on('clientReady', async () => {
   console.log(`✅ Discord бот запущен как ${discord.user?.tag}`);
-  guild = await discord.guilds.fetch(GUILD_ID) as Guild;
+  guild = await discord.guilds.fetch(GUILD_ID);
   await guild.channels.fetch();
   console.log(`✅ Сервер: ${guild.name}`);
 });
@@ -119,19 +112,19 @@ discord.login(DISCORD_TOKEN);
 // ─── TELEGRAM BOT ─────────────────────────────────────────────────────────────
 const tg = new TelegramBot(TG_TOKEN, { polling: true });
 
-function isAllowed(userId: number): boolean {
+function isAllowed(userId) {
   return ALLOWED_TG_IDS.includes(userId);
 }
 
-function checkAccess(msg: TelegramBot.Message): boolean {
-  if (!isAllowed(msg.from!.id)) {
+function checkAccess(msg) {
+  if (!isAllowed(msg.from.id)) {
     tg.sendMessage(msg.chat.id, '🚫 У тебя нет доступа к этому боту.');
     return false;
   }
   return true;
 }
 
-async function getGuild(): Promise<Guild | null> {
+async function getGuild() {
   if (guild) return guild;
   for (let i = 0; i < 10; i++) {
     await new Promise(r => setTimeout(r, 500));
@@ -140,7 +133,7 @@ async function getGuild(): Promise<Guild | null> {
   return null;
 }
 
-async function findMemberByUsername(username: string): Promise<GuildMember | null> {
+async function findMemberByUsername(username) {
   const g = await getGuild();
   if (!g) return null;
   await fetchMembersIfNeeded(g);
@@ -152,12 +145,7 @@ async function findMemberByUsername(username: string): Promise<GuildMember | nul
 }
 
 // ─── ВОСПРОИЗВЕДЕНИЕ ЗВУКА ────────────────────────────────────────────────────
-async function playSound(
-  chatId: number,
-  voiceChannelId: string,
-  soundKey: string,
-  callbackQueryId?: string,
-) {
+async function playSound(chatId, voiceChannelId, soundKey, callbackQueryId) {
   const g = await getGuild();
   if (!g) return tg.sendMessage(chatId, '❌ Discord не подключён.');
 
@@ -191,14 +179,14 @@ async function playSound(
       const resource = createAudioResource(soundPath, { inlineVolume: false });
       connection.subscribe(player);
       player.play(resource);
-    } catch (err: any) {
+    } catch (err) {
       console.error('❌ Play error:', err);
       tg.sendMessage(chatId, `❌ Ошибка воспроизведения: ${err?.message}`);
       connection.destroy();
     }
   };
 
-  connection.on('stateChange', async (oldState: any, newState: any) => {
+  connection.on('stateChange', async (oldState, newState) => {
     if (
       oldState.status !== VoiceConnectionStatus.Ready &&
       (newState.status === VoiceConnectionStatus.Connecting ||
@@ -228,12 +216,7 @@ async function playSound(
 }
 
 // ─── ОСНОВНАЯ ФУНКЦИЯ ДЕЙСТВИЙ С ВОЙСОМ ──────────────────────────────────────
-async function handleVoiceAction(
-  chatId: number,
-  action: string,
-  discordId: string,
-  callbackQueryId?: string,
-) {
+async function handleVoiceAction(chatId, action, discordId, callbackQueryId) {
   const g = await getGuild();
   if (!g) return tg.sendMessage(chatId, '❌ Discord не подключён.');
 
@@ -272,7 +255,7 @@ async function handleVoiceAction(
         tg.sendMessage(chatId, '❌ Неизвестное действие.');
     }
     if (callbackQueryId) tg.answerCallbackQuery(callbackQueryId, { text: '✅ Готово' });
-  } catch (err: any) {
+  } catch (err) {
     console.error(err);
     tg.sendMessage(chatId, `❌ Ошибка: ${err?.message}`);
     if (callbackQueryId) tg.answerCallbackQuery(callbackQueryId, { text: '❌ Ошибка' });
@@ -315,17 +298,16 @@ tg.onText(/\/start/, async (msg) => {
   );
 });
 
-// ─── /sounds ──────────────────────────────────────────────────────────────────
+// /sounds
 tg.onText(/\/sounds/, async (msg) => {
   if (!checkAccess(msg)) return;
   const g = await getGuild();
   if (!g) return tg.sendMessage(msg.chat.id, '❌ Discord не подключён.');
 
-  const activeChannels: { id: string; name: string; count: number }[] = [];
+  const activeChannels = [];
   g.channels.cache.forEach(ch => {
     if (ch.isVoiceBased()) {
-      const vc = ch as any;
-      const humans = vc.members?.filter((m: GuildMember) => !m.user.bot).size || 0;
+      const humans = ch.members?.filter(m => !m.user.bot).size || 0;
       if (humans > 0) activeChannels.push({ id: ch.id, name: ch.name, count: humans });
     }
   });
@@ -342,19 +324,18 @@ tg.onText(/\/sounds/, async (msg) => {
   });
 });
 
-// ─── /voice ───────────────────────────────────────────────────────────────────
+// /voice
 tg.onText(/\/voice/, async (msg) => {
   if (!checkAccess(msg)) return;
   const g = await getGuild();
   if (!g) return tg.sendMessage(msg.chat.id, '❌ Discord не подключён.');
 
   await fetchMembersIfNeeded(g);
-  const voiceMembers: { channel: string; member: GuildMember }[] = [];
+  const voiceMembers = [];
 
   g.channels.cache.forEach(ch => {
     if (ch.isVoiceBased()) {
-      const vc = ch as any;
-      vc.members?.forEach((m: GuildMember) => {
+      ch.members?.forEach(m => {
         if (!m.user.bot) voiceMembers.push({ channel: ch.name, member: m });
       });
     }
@@ -379,7 +360,7 @@ tg.onText(/\/voice/, async (msg) => {
   );
 });
 
-// ─── /move @user ──────────────────────────────────────────────────────────────
+// /move @user
 tg.onText(/\/move (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -406,15 +387,12 @@ tg.onText(/\/move (.+)/, async (msg, match) => {
         activeBounces.delete(key);
         return;
       }
-
       const voiceChannels = g.channels.cache.filter(ch =>
         ch.type === ChannelType.GuildVoice && ch.id !== freshMember.voice.channelId
       );
-
       if (voiceChannels.size === 0) return;
-
       const channels = [...voiceChannels.values()];
-      const randomChannel = channels[Math.floor(Math.random() * channels.length)] as VoiceChannel;
+      const randomChannel = channels[Math.floor(Math.random() * channels.length)];
       await freshMember.voice.setChannel(randomChannel).catch(() => {});
     } catch {
       clearInterval(interval);
@@ -425,7 +403,7 @@ tg.onText(/\/move (.+)/, async (msg, match) => {
   activeBounces.set(key, interval);
 });
 
-// ─── /stop_move @user ─────────────────────────────────────────────────────────
+// /stop_move @user
 tg.onText(/\/stop_move (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -442,17 +420,16 @@ tg.onText(/\/stop_move (.+)/, async (msg, match) => {
   tg.sendMessage(msg.chat.id, `🛑 ${member.user.username} остановлен.`);
 });
 
-// ─── /rename_channel ──────────────────────────────────────────────────────────
+// /rename_channel
 tg.onText(/\/rename_channel/, async (msg) => {
   if (!checkAccess(msg)) return;
   const g = await getGuild();
   if (!g) return tg.sendMessage(msg.chat.id, '❌ Discord не подключён.');
 
-  const activeChannels: { id: string; name: string; count: number }[] = [];
+  const activeChannels = [];
   g.channels.cache.forEach(ch => {
     if (ch.isVoiceBased()) {
-      const vc = ch as any;
-      const humans = vc.members?.filter((m: GuildMember) => !m.user.bot).size || 0;
+      const humans = ch.members?.filter(m => !m.user.bot).size || 0;
       if (humans > 0) activeChannels.push({ id: ch.id, name: ch.name, count: humans });
     }
   });
@@ -469,7 +446,7 @@ tg.onText(/\/rename_channel/, async (msg) => {
   });
 });
 
-// ─── /role_add @user ──────────────────────────────────────────────────────────
+// /role_add @user
 tg.onText(/\/role_add (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -481,8 +458,8 @@ tg.onText(/\/role_add (.+)/, async (msg, match) => {
   if (!member) return tg.sendMessage(msg.chat.id, `❌ Пользователь ${match[1]} не найден.`);
 
   const roleName = SHAME_ROLES[Math.floor(Math.random() * SHAME_ROLES.length)];
-
   let role = g.roles.cache.find(r => r.name === roleName);
+
   if (!role) {
     try {
       role = await g.roles.create({
@@ -490,7 +467,7 @@ tg.onText(/\/role_add (.+)/, async (msg, match) => {
         color: 0xff4444,
         reason: 'Унизительная роль от Telegram',
       });
-    } catch (err: any) {
+    } catch (err) {
       return tg.sendMessage(msg.chat.id, `❌ Не удалось создать роль: ${err?.message}`);
     }
   }
@@ -498,12 +475,12 @@ tg.onText(/\/role_add (.+)/, async (msg, match) => {
   try {
     await member.roles.add(role);
     tg.sendMessage(msg.chat.id, `👑 ${member.user.username} получил роль: ${roleName}`);
-  } catch (err: any) {
+  } catch (err) {
     tg.sendMessage(msg.chat.id, `❌ Ошибка: ${err?.message}`);
   }
 });
 
-// ─── /role_remove @user ───────────────────────────────────────────────────────
+// /role_remove @user
 tg.onText(/\/role_remove (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -515,17 +492,15 @@ tg.onText(/\/role_remove (.+)/, async (msg, match) => {
   if (!member) return tg.sendMessage(msg.chat.id, `❌ Пользователь ${match[1]} не найден.`);
 
   try {
-    const removable = member.roles.cache.filter(r =>
-      r.id !== g.id && r.managed === false
-    );
+    const removable = member.roles.cache.filter(r => r.id !== g.id && r.managed === false);
     await member.roles.remove(removable);
     tg.sendMessage(msg.chat.id, `🗑 У ${member.user.username} забрано ${removable.size} ролей.`);
-  } catch (err: any) {
+  } catch (err) {
     tg.sendMessage(msg.chat.id, `❌ Ошибка: ${err?.message}`);
   }
 });
 
-// ─── /nickname @user текст ────────────────────────────────────────────────────
+// /nickname @user текст
 tg.onText(/\/nickname (@\S+|\S+) (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -534,16 +509,15 @@ tg.onText(/\/nickname (@\S+|\S+) (.+)/, async (msg, match) => {
   if (!member) return tg.sendMessage(msg.chat.id, `❌ Пользователь ${match[1]} не найден.`);
 
   const newNick = match[2].trim().slice(0, 32);
-
   try {
     await member.setNickname(newNick, 'Changed via Telegram');
     tg.sendMessage(msg.chat.id, `✏️ Никнейм ${member.user.username} изменён на: ${newNick}`);
-  } catch (err: any) {
+  } catch (err) {
     tg.sendMessage(msg.chat.id, `❌ Ошибка: ${err?.message}`);
   }
 });
 
-// ─── /slowmode канал секунды ──────────────────────────────────────────────────
+// /slowmode #канал секунды
 tg.onText(/\/slowmode (#?\S+) (\d+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -557,7 +531,7 @@ tg.onText(/\/slowmode (#?\S+) (\d+)/, async (msg, match) => {
   const channel = g.channels.cache.find(ch =>
     ch.name.toLowerCase() === channelName &&
     (ch.type === ChannelType.GuildText || ch.type === ChannelType.GuildForum)
-  ) as any;
+  );
 
   if (!channel) return tg.sendMessage(msg.chat.id, `❌ Текстовый канал #${channelName} не найден.`);
 
@@ -568,12 +542,12 @@ tg.onText(/\/slowmode (#?\S+) (\d+)/, async (msg, match) => {
         ? `✅ Slowmode в #${channel.name} выключен.`
         : `🐌 Slowmode в #${channel.name} установлен: ${seconds} сек.`
     );
-  } catch (err: any) {
+  } catch (err) {
     tg.sendMessage(msg.chat.id, `❌ Ошибка: ${err?.message}`);
   }
 });
 
-// ─── /ghost @user ─────────────────────────────────────────────────────────────
+// /ghost @user
 tg.onText(/\/ghost (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -595,16 +569,11 @@ tg.onText(/\/ghost (.+)/, async (msg, match) => {
         permissions: [],
         reason: 'Ghost role from Telegram',
       });
-
-      const textChannels = g.channels.cache.filter(ch =>
-        ch.type === ChannelType.GuildText
-      );
+      const textChannels = g.channels.cache.filter(ch => ch.type === ChannelType.GuildText);
       for (const [, ch] of textChannels) {
-        await (ch as any).permissionOverwrites.create(ghostRole, {
-          ViewChannel: false,
-        }).catch(() => {});
+        await ch.permissionOverwrites.create(ghostRole, { ViewChannel: false }).catch(() => {});
       }
-    } catch (err: any) {
+    } catch (err) {
       return tg.sendMessage(msg.chat.id, `❌ Не удалось создать роль призрака: ${err?.message}`);
     }
   }
@@ -613,12 +582,12 @@ tg.onText(/\/ghost (.+)/, async (msg, match) => {
     await member.roles.add(ghostRole);
     if (member.voice.channel) await member.voice.disconnect().catch(() => {});
     tg.sendMessage(msg.chat.id, `👻 ${member.user.username} исчез с сервера!`);
-  } catch (err: any) {
+  } catch (err) {
     tg.sendMessage(msg.chat.id, `❌ Ошибка: ${err?.message}`);
   }
 });
 
-// ─── /unghost @user ───────────────────────────────────────────────────────────
+// /unghost @user
 tg.onText(/\/unghost (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -635,12 +604,12 @@ tg.onText(/\/unghost (.+)/, async (msg, match) => {
   try {
     await member.roles.remove(ghostRole);
     tg.sendMessage(msg.chat.id, `✅ ${member.user.username} возвращён из призраков!`);
-  } catch (err: any) {
+  } catch (err) {
     tg.sendMessage(msg.chat.id, `❌ Ошибка: ${err?.message}`);
   }
 });
 
-// ─── Текстовые команды войс-действий ──────────────────────────────────────────
+// /kick /mute /unmute /deafen /undeafen @user
 tg.onText(/\/(kick|mute|unmute|deafen|undeafen) (.+)/, async (msg, match) => {
   if (!checkAccess(msg)) return;
   if (!match) return;
@@ -649,6 +618,7 @@ tg.onText(/\/(kick|mute|unmute|deafen|undeafen) (.+)/, async (msg, match) => {
   await handleVoiceAction(msg.chat.id, match[1], member.user.id);
 });
 
+// /all_mute
 tg.onText(/\/all_mute/, async (msg) => {
   if (!checkAccess(msg)) return;
   const g = await getGuild();
@@ -664,6 +634,7 @@ tg.onText(/\/all_mute/, async (msg) => {
   tg.sendMessage(msg.chat.id, `🔇 Замучено ${count} участников.`);
 });
 
+// /all_unmute
 tg.onText(/\/all_unmute/, async (msg) => {
   if (!checkAccess(msg)) return;
   const g = await getGuild();
@@ -756,7 +727,7 @@ tg.on('callback_query', async (query) => {
     const parts = data.split(':');
     const channelId = parts[1];
     const newName   = decodeURIComponent(parts.slice(2).join(':'));
-    const ch = g.channels.cache.get(channelId) as VoiceChannel;
+    const ch = g.channels.cache.get(channelId);
     if (!ch) return tg.answerCallbackQuery(query.id, { text: '❌ Канал не найден' });
 
     try {
@@ -764,7 +735,7 @@ tg.on('callback_query', async (query) => {
       tg.deleteMessage(chatId, msgId).catch(() => {});
       tg.sendMessage(chatId, `✅ Канал переименован в: ${newName}`);
       tg.answerCallbackQuery(query.id, { text: '✅ Переименовано!' });
-    } catch (err: any) {
+    } catch (err) {
       tg.answerCallbackQuery(query.id, { text: `❌ ${err?.message}` });
     }
     return;
@@ -793,8 +764,8 @@ tg.on('callback_query', async (query) => {
               { text: '🎙 Снять мут',      callback_data: `action:unmute:${discordId}` },
             ],
             [
-              { text: '🔕 Выкл. звук',    callback_data: `action:deafen:${discordId}` },
-              { text: '🔊 Вкл. звук',      callback_data: `action:undeafen:${discordId}` },
+              { text: '🔕 Выкл. звук',  callback_data: `action:deafen:${discordId}` },
+              { text: '🔊 Вкл. звук',   callback_data: `action:undeafen:${discordId}` },
             ],
             [
               { text: '🏃 Прыгать по каналам', callback_data: `action:bounce:${discordId}` },
@@ -827,10 +798,7 @@ tg.on('callback_query', async (query) => {
       const member = await g.members.fetch(discordId).catch(() => null);
       if (!member) return tg.answerCallbackQuery(query.id, { text: '❌ Участник не найден' });
       if (!member.voice.channel) return tg.answerCallbackQuery(query.id, { text: '⚠️ Не в войсе' });
-
-      if (activeBounces.has(discordId)) {
-        return tg.answerCallbackQuery(query.id, { text: '⚠️ Уже прыгает!' });
-      }
+      if (activeBounces.has(discordId)) return tg.answerCallbackQuery(query.id, { text: '⚠️ Уже прыгает!' });
 
       tg.answerCallbackQuery(query.id, { text: '🏃 Начинаем прыжки!' });
       tg.sendMessage(chatId, `🏃 ${member.user.username} начинает прыгать!`);
@@ -842,7 +810,7 @@ tg.on('callback_query', async (query) => {
           const channels = g.channels.cache.filter(ch => ch.type === ChannelType.GuildVoice && ch.id !== fm.voice.channelId);
           if (channels.size === 0) return;
           const arr = [...channels.values()];
-          const rand = arr[Math.floor(Math.random() * arr.length)] as VoiceChannel;
+          const rand = arr[Math.floor(Math.random() * arr.length)];
           await fm.voice.setChannel(rand).catch(() => {});
         } catch { clearInterval(interval); activeBounces.delete(discordId); }
       }, 3000);
@@ -894,7 +862,7 @@ tg.on('callback_query', async (query) => {
         if (ghostRole) {
           const textChs = g.channels.cache.filter(ch => ch.type === ChannelType.GuildText);
           for (const [, ch] of textChs) {
-            await (ch as any).permissionOverwrites.create(ghostRole!, { ViewChannel: false }).catch(() => {});
+            await ch.permissionOverwrites.create(ghostRole, { ViewChannel: false }).catch(() => {});
           }
         }
       }
